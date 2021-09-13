@@ -230,7 +230,16 @@ python export_db.py --profile DEMO --metastore --cluster-name "Test"
 
 # export all tables within a specific database
 python export_db.py --profile DEMO --metastore --cluster-name "Test" --database "my_db"
+
+# export all metastore excluding some databases, and use multithreading
+python export_db.py --profile DEMO --metastore --cluster-name "Test" --threads 20 --exclude-databases default,temp_db               
 ```
+
+--database argument accept a comma separated list (as --exclude-databases)
+
+Strongly disencourage more than 20 threads, as it may reach the API limit, causing 429 response
+
+Multithread strategy is to give a single database to each thread. It won't help if a single database is being exported. If there is a single database with most of the tables, it will still be the bottle neck
 
 # import all metastore entries
 python import_db.py --profile newDEMO --metastore
