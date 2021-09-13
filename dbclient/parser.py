@@ -200,6 +200,13 @@ def get_export_parser():
 
     parser.add_argument('--bypass-windows-check', action='store_true',
                         help='By-pass windows os checker')
+
+    parser.add_argument('--threads', action='store',
+                        help='Number of threads to be used in the multithread approach')
+
+    parser.add_argument('--exclude-databases', action='store',
+                        help='Comma separated list of databases to ignore on export')
+
     return parser
 
 
