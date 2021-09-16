@@ -207,6 +207,9 @@ def get_export_parser():
     parser.add_argument('--exclude-databases', action='store',
                         help='Comma separated list of databases to ignore on export')
 
+    parser.add_argument('--exclude-managed-tables', action='store_true',
+                        help='Flag to ignore managed tables on export')
+
     return parser
 
 

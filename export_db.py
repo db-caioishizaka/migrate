@@ -141,7 +141,7 @@ def main():
         print("Export the metastore configs at {0}".format(now))
         start = timer()
         hive_c = HiveClient(client_config)
-        hive_c.export_hive_metastore(cluster_name=args.cluster_name, has_unicode=args.metastore_unicode, threads = args.threads, exclude_databases = args.exclude_databases, database_name = args.database)
+        hive_c.export_hive_metastore(cluster_name=args.cluster_name, has_unicode=args.metastore_unicode, threads = args.threads, exclude_databases = args.exclude_databases, database_name = args.database, exclude_managed_tables = args.exclude_managed_tables)
         end = timer()
         print("Complete Metastore Export Time: " + str(timedelta(seconds=end - start)))
 

@@ -494,9 +494,9 @@ class ClustersClient(dbclient):
         self.wait_for_cluster(cid)
         return cid
 
-    def submit_command(self, cid, ec_id, cmd):
+    def submit_command(self, cid, ec_id, cmd, language = 'python'):
         # This launches spark commands and print the results. We can pull out the text results from the API
-        command_payload = {'language': 'python',
+        command_payload = {'language': language,
                            'contextId': ec_id,
                            'clusterId': cid,
                            'command': cmd}

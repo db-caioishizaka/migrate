@@ -9,6 +9,31 @@ from multiprocessing import Pool
 
 from dbclient import *
 
+set_temp_table_with_metastore = """
+import com.databricks.backend.common.util.Project
+import com.databricks.backend.daemon.driver.DriverConf
+import com.databricks.conf.trusted.ProjectConf
+import java.util.Properties
+
+val dbConf = new DriverConf(ProjectConf.loadLocalConfig(Project.Driver))
+val port = dbConf.internalMetastorePort
+val user = dbConf.internalMetastoreUser
+val pass = dbConf.internalMetastorePassword
+val db = dbConf.internalMetastoreDatabase
+val host = dbConf.internalMetastoreHost.get
+
+val jdbcUrl = s"jdbc:mysql://${host}:${port}/${db}"
+
+val connectionProperties = new Properties()
+connectionProperties.put("user", s"${user}")
+connectionProperties.put("password", s"${pass}")
+
+Class.forName("org.mariadb.jdbc.Driver")
+
+val sql = "(SELECT b.NAME, from_unixtime(a.CREATE_TIME) as create_time_t, lower(c.PARAM_VALUE) as type, sp.PARAM_VALUE AS LOCATION , a.* from TBLS a JOIN DBS b ON a.DB_ID = b.DB_ID JOIN SDS s ON s.SD_ID = a.SD_ID JOIN SERDE_PARAMS sp ON sp.SERDE_ID = s.SERDE_ID AND sp.PARAM_KEY = 'path' LEFT JOIN TABLE_PARAMS c ON c.TBL_ID = a.TBL_ID AND c.PARAM_KEY = 'spark.sql.sources.provider') as empty_sc"
+val df = spark.read.jdbc(url=jdbcUrl, table=sql, properties=connectionProperties).cache()
+df.count()
+df.createOrReplaceTempView("hive_tables")"""
 
 class HiveClient(ClustersClient):
 
@@ -210,7 +235,7 @@ class HiveClient(ClustersClient):
         return db_json
 
     def export_hive_metastore(self, cluster_name=None, metastore_dir='metastore/', db_log='database_details.log',
-                              success_log='success_metastore.log', fail_log='failed_metastore.log', has_unicode=False, threads = None, exclude_databases = None, database_name = None):
+                              success_log='success_metastore.log', fail_log='failed_metastore.log', has_unicode=False, threads = None, exclude_databases = None, database_name = None, exclude_managed_tables = None):
         start = timer()
         instance_profiles = self.get_instance_profiles_list()
         if cluster_name:
@@ -252,8 +277,10 @@ class HiveClient(ClustersClient):
             print(resp)
             print(f"Threads: {threads}")
             print(f"Databases ({len(valid_dbs)}): {valid_dbs}")
+        #This just set the database/table temp table
+        resp = self.submit_command(cid, ec_id, set_temp_table_with_metastore, language = 'scala')        
         pool = Pool(int(threads))
-        pool.starmap(self.export_database, [(db_name,cid, ec_id, metastore_dir, failed_metastore_log_path, success_metastore_log_path, current_iam_role, has_unicode, database_logfile) for db_name in valid_dbs])
+        pool.starmap(self.export_database, [(db_name,cid, ec_id, metastore_dir, failed_metastore_log_path, success_metastore_log_path, current_iam_role, has_unicode, database_logfile, exclude_managed_tables) for db_name in valid_dbs])
 
         total_failed_entries = self.get_num_of_lines(failed_metastore_log_path)
         if (not self.is_skip_failed()) and self.is_aws() and total_failed_entries > 0:
@@ -267,13 +294,13 @@ class HiveClient(ClustersClient):
             print("Failed count: " + str(total_failed_entries))
             print("Total Databases attempted export: " + str(len(all_dbs)))
 
-    def export_database(self, db_name, cid, ec_id, metastore_dir, failed_metastore_log_path, success_metastore_log_path, current_iam_role, has_unicode, database_logfile):    
+    def export_database(self, db_name, cid, ec_id, metastore_dir, failed_metastore_log_path, success_metastore_log_path, current_iam_role, has_unicode, database_logfile, exclude_managed_tables):    
         os.makedirs(self.get_export_dir() + metastore_dir + db_name, exist_ok=True)
         db_json = self.get_desc_database_details(db_name, cid, ec_id)
         with open(database_logfile, "a") as fp:
             fp.write(json.dumps(db_json) + '\n')
         self.log_all_tables(db_name, cid, ec_id, metastore_dir, failed_metastore_log_path,
-                            success_metastore_log_path, current_iam_role, has_unicode)
+                            success_metastore_log_path, current_iam_role, has_unicode, exclude_managed_tables)
 
     @staticmethod
     def get_num_of_lines(filename):
@@ -392,10 +419,10 @@ class HiveClient(ClustersClient):
         return all_dbs
 
     def log_all_tables(self, db_name, cid, ec_id, metastore_dir, err_log_path, success_log_path, iam,
-                       has_unicode=False):
-        all_tables_cmd = f'all_tables_{db_name} = [x.tableName for x in spark.sql("show tables in {db_name}").collect()]'
+                       has_unicode=False, exclude_managed_tables = None):
+        all_tables_cmd = f"""all_tables_{db_name} = [(x.TBL_NAME,x.TBL_TYPE) for x in spark.sql("SELECT TBL_NAME, TBL_TYPE FROM hive_tables WHERE NAME = '{db_name}'").collect()]\nprint(len(all_tables_{db_name}))"""        
         results = self.submit_command(cid, ec_id, all_tables_cmd)
-        results = self.submit_command(cid, ec_id, f'print(len(all_tables_{db_name}))')
+        # results = self.submit_command(cid, ec_id, )
         num_of_tables = ast.literal_eval(results['data'])
 
         batch_size = 100    # batch size to iterate over databases
@@ -407,8 +434,11 @@ class HiveClient(ClustersClient):
                 tables_slice = f'print(all_tables_{db_name}[{batch_size*m}:{batch_size*(m+1)}])'
                 results = self.submit_command(cid, ec_id, tables_slice)
                 table_names = ast.literal_eval(results['data'])
-                for table_name in table_names:
-                    print("Table: {0}".format(table_name))
+                for table_name, table_type in table_names:                    
+                    print(f"Table: {table_name}, {table_type}")
+                    if exclude_managed_tables and table_type == "MANAGED_TABLE":
+                        print("Managed table, not exported")
+                        continue
                     is_successful = self.log_table_ddl(cid, ec_id, db_name, table_name, metastore_dir,
                                                        err_log_path, has_unicode)
                     if is_successful == 0:
