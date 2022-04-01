@@ -551,7 +551,8 @@ class WorkspaceClient(dbclient):
         api_path = '/permissions' + object_id_with_type
         acl_list = object_acl.get('access_control_list', None)
         api_args = {'access_control_list': self.build_acl_args(acl_list)}
-        resp = self.patch(api_path, api_args)
+        logging.info(f"Notebook {current_obj_id}: {str(api_args)}")
+        resp = self.put(api_path, api_args)
         logging_utils.log_reponse_error(error_logger, resp)
 
     def import_workspace_acls(self, workspace_log_file='acl_notebooks.log',
